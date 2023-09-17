@@ -202,12 +202,15 @@ def tesser_ocr(
         enumerated_column="text_group", column_to_enumerate="group_keys"
     )
     df = df.drop(columns=["group_keys"])
+    df2 = df.copy()
+    df2["grouped_text"] = pd.NA
+    for name, group in df.groupby("text_group"):
+        df2.loc[group.index.to_list(), "grouped_text"] = " ".join(group.ocr_result)
+
     for tmpfile in files2delete:
         try:
             os.remove(tmpfile)
         except Exception:
             continue
 
-    return df
-
-
+    return df2
