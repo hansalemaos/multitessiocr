@@ -6,66 +6,48 @@
 
 
 ```python
-This function takes a path to the Tesseract OCR executable, a list of image paths, URLs,
-base64 strings, numpy arrays, bytes or PIL images
-and optional Tesseract command line arguments. It uses Tesseract to extract text from
-the provided images and returns the results as a pandas DataFrame.
+from multitessiocr import tesser_ocr
 
-Args:
-	tesseract_path (str): The path to the Tesseract OCR executable.
-	allpics (list, tuple): A list of images (image paths, URLs, base64 strings, numpy arrays,
-							bytes or PIL images) to be processed.
-	add_after_tesseract_path (str, optional): Additional arguments to pass to Tesseract
-		after the tesseract executable file path. Defaults to an empty string.
-	add_at_the_end (str, optional): Additional arguments to append at the end of the
-		Tesseract command. Defaults to '-l eng --psm 3'.
-	**kwargs: Additional keyword arguments to control the subprocess execution,
-		such as 'stdout', 'stderr', 'timeout', etc. See the 'subprocess.run'
-		documentation for more details.
+piclist = [
+    r"C:\screeeni\35.png",
+    r"C:\Users\hansc\Downloads\2023-11-12 00_48_43-.png",
+    r"C:\Users\hansc\Downloads\WhatsApp Image 2023-09-19 at 12.03.41 PM.jpeg",
+    r"C:\Users\hansc\Downloads\WhatsApp Image 2023-09-19 at 11.06.46 AM.jpeg",
+    r"C:\Users\hansc\Downloads\WhatsApp Image 2023-09-19 at 11.06.33 AM.jpeg",
+    r"C:\Users\hansc\Downloads\WhatsApp Image 2023-09-19 at 11.06.22 AM.jpeg",
+    r"C:\Users\hansc\Downloads\WhatsApp Image 2023-09-19 at 12.03.42 PM.jpeg",
+]
 
-Returns:
-	pandas.DataFrame: A DataFrame containing the OCR results with columns:
-		- 'id_img': Image ID (integer)
-		- 'id_word': Word ID within the image (integer)
-		- 'ocr_result': Recognized text (string)
-		- 'start_x': Starting X-coordinate of the bounding box (integer)
-		- 'end_x': Ending X-coordinate of the bounding box (integer)
-		- 'start_y': Starting Y-coordinate of the bounding box (integer)
-		- 'end_y': Ending Y-coordinate of the bounding box (integer)
-		- 'conf': Confidence score (integer)
-		- 'text_group': Group identifier for enumerated groups (integer)
+df = tesser_ocr(
+    piclist=piclist,
+    tesser_path=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    add_after_tesseract_path="",
+    add_at_the_end="-l eng+por --psm 3",
+    processes=5,
+    chunks=5,
+    print_stdout=False,
+    print_stderr=True,
+)
 
-Example:
-	from multitessiocr import tesser_ocr
-	df = tesser_ocr(
-		tesseract_path=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-		allpics=[
-			"https://m.media-amazon.com/images/I/711y6oE2JrL._SL1500_.jpg",
-			"https://m.media-amazon.com/images/I/61g+KBpG20L._SL1500_.jpg",
-		],
-		add_after_tesseract_path="",
-		add_at_the_end="-l eng --psm 3",
-	)
-	print(df.to_string())
-	# ...
-	# 11       1       12         today.      402    498      460    492    96       3072       450       476     96      32           4
-	# 12       1       13           Wait      551    635      525    556    95       2604       593       540     84      31           5
-	# 13       1       14           till      645    695      525    556    96       1550       670       540     50      31           5
-	# 14       1       15            you      705    773      533    565    96       2176       739       549     68      32           5
-	# 15       1       16           hear      562    645      579    610    95       2573       603       594     83      31           6
-	# 16       1       17          about      663    767      579    610    96       3224       715       594    104      31           6
-	# 17       2        1            ART       94    246      125    207    95      12464       170       166    152      82           7
-	# 18       2        2             OF      275    376      125    207    95       8282       325       166    101      82           7
-	# 19       2        3     NONVIOLENT      407    907      125    206    96      40500       657       165    500      81           7
-	# 20       2        4  COMMUNICATION      167    832      296    377    96      53865       499       336    665      81           8
-	# 21       2        5            TAR      319    379      428    444    31        960       349       436     60      16           9
-	# ...
+#         aa_text  aa_start_x  aa_start_y  aa_end_x  aa_end_y aa_object aa_type  aa_element_index  aa_page  aa_index aa_language aa_parents aa_all_children aa_direct_children aa_tag  aa_x_size  aa_x_descenders  aa_x_ascenders  aa_x_wconf  aa_baseline_1  aa_baseline_2  aa_document_index  aa_width  aa_height  aa_area  aa_center_x  aa_center_y
+# 7  Ameta-markup         802         318       922       335      word    word                 1        1         3        <NA>     (4, 5)              ()                 ()   span       <NA>             <NA>            <NA>        77.0           <NA>           <NA>                  0       120         17     2040          862          326
+# 8     language,         933         321      1001       335      word    word                 1        1         4        <NA>     (4, 5)              ()                 ()   span       <NA>             <NA>            <NA>        96.0           <NA>           <NA>                  0        68         14      952          967          328
+# 9          used        1014         318      1050       331      word    word                 1        1         5        <NA>     (4, 5)              ()                 ()   span       <NA>             <NA>            <NA>        96.0           <NA>           <NA>                  0        36         13      468         1032          324
 
 
-Note:
-	- Images are first loaded, processed, and written to temporary files before OCR.
-	- OCR results are extracted from the HOCR format output generated by Tesseract.
-	- The resulting DataFrame contains information about recognized words and their positions.
-	- The 'text_group' column is used to enumerate groups of related words (same line) within an image.
+    Perform OCR on a list of images using Tesseract.
+
+    Parameters:
+    - piclist (list): List of image file paths.
+    - tesser_path (str): Path to the Tesseract executable.
+    - add_after_tesseract_path (str): Additional parameters to add after the Tesseract path.
+    - add_at_the_end (str): Additional parameters to add at the end of Tesseract command.
+    - processes (int): Number of parallel processes for image processing.
+    - chunks (int): Number of chunks to divide the image list for parallel processing.
+    - print_stdout (bool): Whether to print standard output during execution.
+    - print_stderr (bool): Whether to print standard error during execution.
+
+    Returns:
+    - pd.DataFrame: A DataFrame containing parsed OCR results.
 
 ```

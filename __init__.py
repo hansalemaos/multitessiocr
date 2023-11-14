@@ -1,37 +1,60 @@
+import ctypes
 import os
+import platform
 import re
 import subprocess
+import sys
 import tempfile
-from typing import Union
-
+from collections import defaultdict
+from functools import cache
 import cv2
 import numpy as np
-from shortpath83 import get_short_path_name
 from a_cv_imwrite_imread_plus import open_image_in_cv
 from touchtouch import touch
-from a_pandas_ex_xml2df import pd_add_read_xml_files
 import pandas as pd
-from a_pandas_ex_enumerate_groups import pd_add_enumerate_group
-
-pd_add_enumerate_group()
-pd_add_read_xml_files()
-
-startupinfo = subprocess.STARTUPINFO()
-startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-startupinfo.wShowWindow = subprocess.SW_HIDE
-creationflags = subprocess.CREATE_NO_WINDOW
-invisibledict = {
-    "startupinfo": startupinfo,
-    "creationflags": creationflags,
-    "start_new_session": True,
-}
+from a_pandas_ex_apply_ignore_exceptions import pd_add_apply_ignore_exceptions
+from multiprocca import start_multiprocessing
+from multiprocca.proclauncher import MultiProcExecution
+pd_add_apply_ignore_exceptions()
+from lxml import etree, html
+from ast import literal_eval
 
 
-def try_to_convert_to_int(x):
+@cache
+def get_short_path_name(long_name):
     try:
-        return int(x)
-    except:
-        return x
+        if not iswindows:
+            return long_name
+        output_buf_size = 4096
+        output_buf = ctypes.create_unicode_buffer(output_buf_size)
+        _ = _GetShortPathNameW(long_name, output_buf, output_buf_size)
+        return output_buf.value
+    except Exception as e:
+        sys.stderr.write(f"{e}\n")
+        return long_name
+
+
+iswindows = "win" in platform.platform().lower()
+if iswindows:
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    creationflags = subprocess.CREATE_NO_WINDOW
+    invisibledict = {
+        "startupinfo": startupinfo,
+        "creationflags": creationflags,
+        "start_new_session": True,
+    }
+    from ctypes import wintypes
+
+    windll = ctypes.LibraryLoader(ctypes.WinDLL)
+    kernel32 = windll.kernel32
+    _GetShortPathNameW = kernel32.GetShortPathNameW
+    _GetShortPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    _GetShortPathNameW.restype = wintypes.DWORD
+else:
+    invisibledict = {}
+
 
 
 def get_tmpfile(suffix=".png"):
@@ -43,174 +66,383 @@ def get_tmpfile(suffix=".png"):
     return filename
 
 
-def tesser_ocr(
-    tesseract_path: str,
-    allpics: Union[list, tuple],
-    add_after_tesseract_path: str = "",
-    add_at_the_end: str = "-l eng --psm 3",
-    **kwargs,
-):
+def start_tesser(ini, tesseractcommand, txtresults, txtout, files2delete, **kwargs):
     r"""
-    Performs OCR on a list of images (file path, url, base64, bytes, numpy, PIL ...) using Tesseract and returns the recognized text,
-    its coordinates, and line-based word grouping in a DataFrame.
+    Execute Tesseract OCR on an image and parse the results.
 
-    This function takes a path to the Tesseract OCR executable, a list of image paths, URLs,
-    base64 strings, numpy arrays, bytes or PIL images
-    and optional Tesseract command line arguments. It uses Tesseract to extract text from
-    the provided images and returns the results as a pandas DataFrame.
-
-    Args:
-        tesseract_path (str): The path to the Tesseract OCR executable.
-        allpics (list, tuple): A list of images (image paths, URLs, base64 strings, numpy arrays,
-                                bytes or PIL images) to be processed.
-        add_after_tesseract_path (str, optional): Additional arguments to pass to Tesseract
-            after the tesseract executable file path. Defaults to an empty string.
-        add_at_the_end (str, optional): Additional arguments to append at the end of the
-            Tesseract command. Defaults to '-l eng --psm 3'.
-        **kwargs: Additional keyword arguments to control the subprocess execution,
-            such as 'stdout', 'stderr', 'timeout', etc. See the 'subprocess.run'
-            documentation for more details.
+    Parameters:
+    - ini (int): The document index.
+    - tesseractcommand (str): The Tesseract OCR command.
+    - txtresults (str): The path to the OCR results file in hOCR format.
+    - txtout (str): The path to the temporary text output file.
+    - files2delete (tuple): Tuple of file paths to be deleted after processing.
+    - **kwargs: Additional keyword arguments for subprocess.run.
 
     Returns:
-        pandas.DataFrame: A DataFrame containing the OCR results with columns:
-            - 'id_img': Image ID (integer)
-            - 'id_word': Word ID within the image (integer)
-            - 'ocr_result': Recognized text (string)
-            - 'start_x': Starting X-coordinate of the bounding box (integer)
-            - 'end_x': Ending X-coordinate of the bounding box (integer)
-            - 'start_y': Starting Y-coordinate of the bounding box (integer)
-            - 'end_y': Ending Y-coordinate of the bounding box (integer)
-            - 'conf': Confidence score (integer)
-            - 'text_group': Group identifier for enumerated groups (integer)
-
-    Example:
-        from multitessiocr import tesser_ocr
-        df = tesser_ocr(
-            tesseract_path=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-            allpics=[
-                "https://m.media-amazon.com/images/I/711y6oE2JrL._SL1500_.jpg",
-                "https://m.media-amazon.com/images/I/61g+KBpG20L._SL1500_.jpg",
-            ],
-            add_after_tesseract_path="",
-            add_at_the_end="-l eng --psm 3",
-        )
-        print(df.to_string())
-        # ...
-        # 11       1       12         today.      402    498      460    492    96       3072       450       476     96      32           4
-        # 12       1       13           Wait      551    635      525    556    95       2604       593       540     84      31           5
-        # 13       1       14           till      645    695      525    556    96       1550       670       540     50      31           5
-        # 14       1       15            you      705    773      533    565    96       2176       739       549     68      32           5
-        # 15       1       16           hear      562    645      579    610    95       2573       603       594     83      31           6
-        # 16       1       17          about      663    767      579    610    96       3224       715       594    104      31           6
-        # 17       2        1            ART       94    246      125    207    95      12464       170       166    152      82           7
-        # 18       2        2             OF      275    376      125    207    95       8282       325       166    101      82           7
-        # 19       2        3     NONVIOLENT      407    907      125    206    96      40500       657       165    500      81           7
-        # 20       2        4  COMMUNICATION      167    832      296    377    96      53865       499       336    665      81           8
-        # 21       2        5            TAR      319    379      428    444    31        960       349       436     60      16           9
-        # ...
-
-
-    Note:
-        - Images are first loaded, processed, and written to temporary files before OCR.
-        - OCR results are extracted from the HOCR format output generated by Tesseract.
-        - The resulting DataFrame contains information about recognized words and their positions.
-        - The 'text_group' column is used to enumerate groups of related words (same line) within an image.
-
+    - pd.DataFrame: A DataFrame containing parsed OCR results.
     """
-    tesseractpath = get_short_path_name(tesseract_path)
-    allimis = {}
-    files2delete = []
-    for ini, pi in enumerate(allpics):
+    try:
+        exec ("""
+import os
+import sys
+import platform
+# import re
+import subprocess
+import tempfile
+from collections import defaultdict
+from functools import cache
+import numpy as np
+import pandas as pd
+from a_pandas_ex_apply_ignore_exceptions import pd_add_apply_ignore_exceptions
+pd_add_apply_ignore_exceptions()
+from lxml import etree, html
+from ast import literal_eval        
+        """, globals())
+
+        idcounter = 0
+        iswindows = "win" in platform.platform().lower()
+        if iswindows:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = subprocess.CREATE_NO_WINDOW
+            invisibledict = {
+                "startupinfo": startupinfo,
+                "creationflags": creationflags,
+                "start_new_session": True,
+            }
+        else:
+            invisibledict = {}
+
+        def fia(el, h):
+            nonlocal idcounter
+            elhash = hash(el)
+            if elhash not in newids:
+                newids[elhash] = int(idcounter)
+                idcounter += 1
+            if elhash not in allitems:
+                allitems[elhash] = el
+            if not hasattr(el, "getchildren"):
+                method = el.iter
+            else:
+                method = el.getchildren
+            for j in method():
+                fia(j, h + (elhash,))
+                allparents[hash(j)].update(h)
+                allparentschildren[elhash].add(hash(j))
+
+        kwargs.update(invisibledict)
+        subprocess.run(tesseractcommand, **kwargs)
+        with open(txtresults + ".hocr", mode="r", encoding="utf-8") as f:
+            data = f.read()
+        files2delete = list(files2delete)
+        files2delete.extend([txtout, txtresults, txtresults + ".hocr"])
+
+        allitems = {}
+        allparents = defaultdict(set)
+        allparentschildren = defaultdict(set)
+
+        newids = {}
+        tree = html.fromstring(data.encode())
+        fia(tree, ())
+        allparents = {k: frozenset(v) for k, v in allparents.items()}
+        allparentschildren = {k: frozenset(v) for k, v in allparentschildren.items()}
+        df = pd.DataFrame(pd.Series(allitems))
+        df["aa_element_id"] = df.index.__array__().copy()
+        df["aa_parents"] = df.index.map(allparents)
+        allchildren = defaultdict(set)
+        for k, v in allparents.items():
+            for vv in v:
+                allchildren[vv].add(k)
+        allchildren2 = {}
+        for k in allchildren:
+            allchildren2[k] = frozenset(allchildren[k])
+        df["aa_all_children"] = df.index.map(allchildren2)
+        df["aa_direct_children"] = df.index.map(allparentschildren)
+        df["aa_tag"] = df[0].ds_apply_ignore(pd.NA, lambda q: q.tag)
+
+        def parse_text(h):
+            try:
+                tco = "\n".join(([str(x.text_content()) for x in h])).strip()
+                if not tco:
+                    return etree.tostring(
+                        h, method="text", encoding="unicode", with_tail=True
+                    ).strip()
+                return tco
+            except Exception:
+                try:
+                    return etree.tostring(
+                        h, method="text", encoding="unicode", with_tail=True
+                    ).strip()
+                except Exception:
+                    return ""
+
+        df["aa_text"] = df[0].ds_apply_ignore(pd.NA, lambda q: parse_text(q))
+        df["aa_items"] = df[0].ds_apply_ignore(
+            ((None, None),), lambda q: tuple(q.items())
+        )
+        mava = df.aa_items.apply(len).max()
+        dfitems = df.aa_items.apply(
+            lambda x: x + tuple(([pd.NA] * (mava - len(x))))
+        ).apply(pd.Series)
+
+        dfitems.columns = ["tesser_" + str(x) for x in dfitems.columns]
+        df = df.merge(dfitems, right_index=True, left_index=True)
+        df.reset_index(drop=True, inplace=True)
+        for t in [x for x in df.columns if str(x).startswith("tesser_")]:
+            df[t] = df[t].ds_apply_ignore(pd.NA, lambda q: q[1])
+        df.tesser_0 = df.tesser_0.str.split("_").str[-1]
+        splitind = df.loc[~df[df.columns[-1]].isna()].index.__array__()
+        spli = np.array_split(df, splitind)[1:]
+        df = pd.concat(
+            [x.assign(aa_element_index=i) for i, x in enumerate(spli)],
+            ignore_index=True,
+        )
+        df = pd.concat(
+            [
+                df,
+                df.tesser_1.str.split("_")
+                .apply(pd.Series)[[0, 1, 2]]
+                .rename(columns={0: "aa_type", 1: "aa_page", 2: "aa_index"}),
+            ],
+            axis=1,
+        )
+        df.rename(columns={"tesser_0": "aa_object"}, inplace=True)
+        df.drop(columns="tesser_1", inplace=True)
+        df.tesser_2 = df.tesser_2.str.strip()
+        df["aa_language"] = df.tesser_2.str.extract(r"^(?P<aa_language>[^\s]+)$")
+        df["tessertemp"] = df.tesser_2 + " " + df.tesser_3.fillna("")
+        df = pd.concat(
+            [
+                df,
+                df["tessertemp"]
+                .str.extractall(
+                    r"bbox\s+(?P<start_x>\d+)\s+(?P<start_y>\d+)\s+(?P<end_x>\d+)\s+(?P<end_y>\d+)\s*"
+                )
+                .reset_index(drop=True)
+                .astype("Int64"),
+            ],
+            axis=1,
+        )
+        df.tessertemp = df.tessertemp.str.split(";").str[1:]
+        tmpd = []
+        _ = df.ds_apply_ignore(
+            pd.NA,
+            lambda q: pd.NA
+            if not tmpd.append(
+                [q.name, [x.strip().split(maxsplit=1) for x in q.tessertemp]]
+            )
+            else pd.NA,
+            axis=1,
+        )
+
+        @cache
+        def astli(x):
+            try:
+                return literal_eval(x)
+            except Exception:
+                return x
+
+        for i, t in tmpd:
+            if t:
+                for tt in t:
+                    df.at[i, f"aa_{tt[0]}"] = astli(tt[1])
+        missing = object()
+        baselines = df.aa_baseline.str.extractall(
+            r"^(?P<aa_baseline_1>[^\s]+)\s+(?P<aa_baseline_2>[^\s]+)"
+        ).reset_index()
+        bale = baselines.level_0.__array__()
+        df.loc[bale, "aa_baseline_1"] = baselines["aa_baseline_1"].astype("Float64")
+        df.loc[bale, "aa_baseline_2"] = baselines["aa_baseline_2"].astype("Float64")
+        df.reset_index(drop=True, inplace=True)
+        lookupdict1 = df.aa_element_id.to_dict()
+        lookupdict2 = {v: k for k, v in lookupdict1.items()}
+        df.aa_parents = df.aa_parents.ds_apply_ignore(
+            (),
+            lambda x: tuple(
+                sorted(
+                    list(
+                        (
+                            q
+                            for q in (set((lookupdict2.get(y, missing) for y in x)))
+                            if q is not missing
+                        )
+                    )
+                )
+            ),
+        )
+        df.aa_all_children = df.aa_all_children.ds_apply_ignore(
+            (),
+            lambda x: tuple(
+                sorted(
+                    list(
+                        (
+                            q
+                            for q in (set((lookupdict2.get(y, missing) for y in x)))
+                            if q is not missing
+                        )
+                    )
+                )
+            ),
+        )
+        df.aa_direct_children = df.aa_direct_children.ds_apply_ignore(
+            (),
+            lambda x: tuple(
+                sorted(
+                    list(
+                        (
+                            q
+                            for q in (set((lookupdict2.get(y, missing) for y in x)))
+                            if q is not missing
+                        )
+                    )
+                )
+            ),
+        )
+        df.drop(
+            columns=[
+                0,
+                "aa_element_id",
+                "aa_items",
+                "tesser_2",
+                "tesser_3",
+                "tessertemp",
+                "aa_baseline",
+            ],
+            inplace=True,
+        )
+
+        for f in files2delete:
+            try:
+                os.remove(f)
+            except Exception:
+                continue
+
+        df = (
+            df[
+                [
+                    "aa_text",
+                    "start_x",
+                    "start_y",
+                    "end_x",
+                    "end_y",
+                    "aa_object",
+                    "aa_type",
+                    "aa_element_index",
+                    "aa_page",
+                    "aa_index",
+                    "aa_language",
+                    "aa_parents",
+                    "aa_all_children",
+                    "aa_direct_children",
+                    "aa_tag",
+                    "aa_x_size",
+                    "aa_x_descenders",
+                    "aa_x_ascenders",
+                    "aa_x_wconf",
+                    "aa_baseline_1",
+                    "aa_baseline_2",
+                ]
+            ]
+            .astype(
+                {
+                    "aa_text": "string",
+                    "start_x": np.int32,
+                    "start_y": np.int32,
+                    "end_x": np.int32,
+                    "end_y": np.int32,
+                    "aa_object": "string",
+                    "aa_type": "string",
+                    "aa_element_index": np.int32,
+                    "aa_page": np.int32,
+                    "aa_index": np.int32,
+                    "aa_language": "string",
+                    "aa_parents": object,
+                    "aa_all_children": object,
+                    "aa_direct_children": object,
+                    "aa_tag": "string",
+                    "aa_x_size": "Float64",
+                    "aa_x_descenders": "Float64",
+                    "aa_x_ascenders": "Float64",
+                    "aa_x_wconf": "Float64",
+                    "aa_baseline_1": "Float64",
+                    "aa_baseline_2": "Float64",
+                }
+            )
+            .assign(aa_document_index=ini)
+        )
+
+        df["aa_width"] = df.end_x - df.start_x
+        df["aa_height"] = df.end_y - df.start_y
+        df["aa_area"] = df.aa_width * df.aa_height
+        df["aa_center_x"] = df.start_x + (df.aa_width // 2)
+        df["aa_center_y"] = df.start_y + (df.aa_height // 2)
+        df.columns = [
+            f"aa_{x}" if not str(x).startswith("aa_") else x for x in df.columns
+        ]
+        return df
+    except Exception as e:
+        sys.stderr.write(f"{e}\n")
+        sys.stderr.flush()
+        return pd.DataFrame()
+
+
+def tesser_ocr(
+    piclist,
+    tesser_path=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    add_after_tesseract_path="",
+    add_at_the_end="-l eng+por --psm 3",
+    processes=5,
+    chunks=1,
+    print_stdout=False,
+    print_stderr=True,
+
+):
+    r"""
+    Perform OCR on a list of images using Tesseract.
+
+    Parameters:
+    - piclist (list): List of image file paths.
+    - tesser_path (str): Path to the Tesseract executable.
+    - add_after_tesseract_path (str): Additional parameters to add after the Tesseract path.
+    - add_at_the_end (str): Additional parameters to add at the end of Tesseract command.
+    - processes (int): Number of parallel processes for image processing.
+    - chunks (int): Number of chunks to divide the image list for parallel processing.
+    - print_stdout (bool): Whether to print standard output during execution.
+    - print_stderr (bool): Whether to print standard error during execution.
+
+    Returns:
+    - pd.DataFrame: A DataFrame containing parsed OCR results.
+    """
+    allcommands = []
+    tesseractpath = get_short_path_name(tesser_path)
+    for ini, pi in enumerate(piclist):
         tmpfile = get_tmpfile(suffix=".png")
         loadedimg = open_image_in_cv(pi, channels_in_output=4)
-        allimis[ini] = {"filename": tmpfile, "img": loadedimg}
         cv2.imwrite(tmpfile, loadedimg)
 
-    txtout = get_tmpfile(suffix=".txt")
-    txtresults = get_tmpfile(suffix=".txt")
-    alltmpimagefiles = [item["filename"] for key, item in allimis.items()]
-    files2delete.extend(alltmpimagefiles)
-    with open(txtout, mode="w", encoding="utf-8") as f:
-        f.write("\n".join(alltmpimagefiles))
+        txtout = get_tmpfile(suffix=".txt")
+        txtresults = get_tmpfile(suffix=".txt")
+        files2delete = [tmpfile]
+        with open(txtout, mode="w", encoding="utf-8") as f:
+            f.write(tmpfile)
 
-    tesseractcommand = rf"""{tesseractpath} {add_after_tesseract_path} {txtout} {txtresults} hocr {add_at_the_end}"""
-    tesseractcommand = re.sub(r" +", " ", tesseractcommand)
-    kwargs.update(invisibledict)
-    subprocess.run(tesseractcommand, **kwargs)
-    with open(txtresults + ".hocr", mode="r", encoding="utf-8") as f:
-        data = f.read()
-    files2delete.extend([txtout, txtresults, txtresults + ".hocr"])
-
-    df = pd.Q_Xml2df(data, add_xpath_and_snippet=False).d_unstack()
-    df["group_keys"] = df.aa_all_keys.str[:-1]
-    allocrresults = []
-    for name, group in df.groupby("group_keys"):
-        if len(group) == 4:
-            if group.aa_value.iloc[0] == "ocrx_word":
-                try:
-                    _, page_number, word_number = group.aa_value.iloc[1].split(
-                        "_", maxsplit=2
-                    )
-                    page_number = int(page_number)
-                    word_number = int(word_number)
-                    ocr_result = group.aa_value.iloc[3]
-                    box, conf = group.aa_value.iloc[2].split(";", maxsplit=1)
-                    conf = int(conf.split(maxsplit=1)[-1])
-                    box0, box1, box2, box3 = [
-                        g
-                        for x in box.split()
-                        if isinstance((g := try_to_convert_to_int(x)), int)
-                    ]
-
-                    allocrresults.append(
-                        {
-                            "id_img": page_number,
-                            "id_word": word_number,
-                            "ocr_result": ocr_result,
-                            "start_x": box0,
-                            "end_x": box2,
-                            "start_y": box1,
-                            "end_y": box3,
-                            "conf": conf,
-                            "group_keys": group.group_keys.iloc[0],
-                        }
-                    )
-                except Exception as fe:
-                    pass
-
-    df = pd.DataFrame(allocrresults).drop_duplicates().reset_index(drop=True)
-    df["start_x"] = df["start_x"].astype(np.uint32)
-    df["end_x"] = df["end_x"].astype(np.uint32)
-    df["start_y"] = df["start_y"].astype(np.uint32)
-    df["end_y"] = df["end_y"].astype(np.uint32)
-    df["conf"] = df["conf"].astype(np.uint8)
-    df["id_img"] = df["id_img"].astype(np.uint32)
-    df["id_word"] = df["id_word"].astype(np.uint32)
-    df["ocr_result"] = df["ocr_result"].astype("string")
-
-    df["area_size"] = (
-        (df["end_x"] - df["start_x"]) * (df["end_y"] - df["start_y"])
-    ).astype(np.uint32)
-
-    df["x_center"] = ((df["start_x"] + df["end_x"]) / 2).astype(np.uint32)
-    df["y_center"] = ((df["start_y"] + df["end_y"]) / 2).astype(np.uint32)
-
-    df["width"] = (df["end_x"] - df["start_x"]).astype(np.uint32)
-    df["height"] = (df["end_y"] - df["start_y"]).astype(np.uint32)
-    df.group_keys = df.group_keys.str[:-1]
-    df = df.ds_enumerate_groups(
-        enumerated_column="text_group", column_to_enumerate="group_keys"
+        tesseractcommand = rf"""{tesseractpath} {add_after_tesseract_path} {txtout} {txtresults} hocr {add_at_the_end}"""
+        tesseractcommand = re.sub(r" +", " ", tesseractcommand)
+        allcommands.append(
+            (ini, tesseractcommand, txtresults, txtout, tuple(files2delete))
+        )
+    f = [
+        MultiProcExecution(fu=start_tesser, args=x, kwargstuple=()) for x in allcommands
+    ]
+    formatted_results, raw_data = start_multiprocessing(
+        it=f,
+        usecache=True,
+        processes=processes,
+        chunks=chunks,
+        print_stdout=print_stdout,
+        print_stderr=print_stderr,
     )
-    df = df.drop(columns=["group_keys"])
-    df2 = df.copy()
-    df2["grouped_text"] = pd.NA
-    for name, group in df.groupby("text_group"):
-        df2.loc[group.index.to_list(), "grouped_text"] = " ".join(group.ocr_result)
+    return pd.concat([x[1] for x in formatted_results.items()], ignore_index=True)
 
-    for tmpfile in files2delete:
-        try:
-            os.remove(tmpfile)
-        except Exception:
-            continue
 
-    return df2
