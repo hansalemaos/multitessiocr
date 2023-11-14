@@ -417,16 +417,19 @@ def tesser_ocr(
     allcommands = []
     tesseractpath = get_short_path_name(tesser_path)
     for ini, pi in enumerate(piclist):
-        tmpfile = get_tmpfile(suffix=".png")
-        loadedimg = open_image_in_cv(pi, channels_in_output=4)
-        cv2.imwrite(tmpfile, loadedimg)
 
+        tmpfile = get_tmpfile(suffix=".png")
         txtout = get_tmpfile(suffix=".txt")
         txtresults = get_tmpfile(suffix=".txt")
         files2delete = [tmpfile]
-        with open(txtout, mode="w", encoding="utf-8") as f:
-            f.write(tmpfile)
 
+        try:
+            loadedimg = open_image_in_cv(pi, channels_in_output=4)
+            cv2.imwrite(tmpfile, loadedimg)
+            with open(txtout, mode="w", encoding="utf-8") as f:
+                f.write(tmpfile)
+        except Exception:
+            pass
         tesseractcommand = rf"""{tesseractpath} {add_after_tesseract_path} {txtout} {txtresults} hocr {add_at_the_end}"""
         tesseractcommand = re.sub(r" +", " ", tesseractcommand)
         allcommands.append(
